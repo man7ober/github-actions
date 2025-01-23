@@ -1,0 +1,84 @@
+name: Deployment
+on:
+  push:
+    branches:
+      - main
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get code
+        uses: actions/checkout@v4
+      - name: Load & cache dependencies # custom action
+        id: cache-deps
+        uses: ./.github/actions/cached-deps # file location
+        with: # get inputs
+          caching: 'false'
+      - name: Output information
+        run: echo "Cache used? ${{ steps.cache-deps.outputs.used-cache }}"
+      - name: Lint code
+        run: npm run lint
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get code
+        uses: actions/checkout@v4
+      - name: Load & cache dependencies # custom action
+        uses: ./.github/actions/cached-deps # location
+      - name: Test code
+        id: run-tests
+        run: npm run test
+      - name: Upload test report
+        if: failure() && steps.run-tests.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with: # upload test.json and zip into test-report
+          name: test-report
+          path: test.json
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get code
+        uses: actions/checkout@v4
+      - name: Load & cache dependencies # custom action
+        uses: ./.github/actions/cached-deps # location
+      - name: Build website
+        run: npm run build
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with: # upload from dist directory and zip into dist-files
+          name: dist-files
+          path: ./dist
+  deploy:
+    environment: testing
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get code
+        uses: actions/checkout@v4
+      - name: Get build artifacts
+        uses: actions/download-artifact@v4
+        with: # download zipped dist-files from ./dist
+          name: dist-files
+          path: ./dist
+      - name: Output contents
+        run: ls
+      - name: Deploy using javascript
+        id: deploy-js
+        uses: ./.github/actions/deploy-s3-javascript
+        with:
+          bucket: deploy-using-javascript
+          dist-folder: ./dist
+      - name: Deploy using docker
+        id: deploy-docker
+        uses: ./.github/actions/deploy-s3-docker
+        with:
+          bucket: deploy-using-docker
+          dist-folder: ./dist
+      - name: Deployed url
+        run: |
+          echo "JavaScript URL: ${{ steps.deploy-js.outputs.website-url }}"
+          echo "Docker URL: ${{ steps.deploy-docker.outputs.website-url }}"
